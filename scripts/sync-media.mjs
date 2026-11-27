@@ -3,9 +3,10 @@ import path from 'node:path';
 import sharp from 'sharp';
 
 const DB_BASE = 'https://cdn.jsdelivr.net/gh/enterxera/enterxera-db@main/data';
-const SHARD_MIN = 1;
-const SHARD_MAX = 10000;
-const BATCH_LIMIT = Number(process.env.BATCH_LIMIT || 500);
+const SHARD_MIN = Number(process.env.SHARD_MIN || 1);
+const SHARD_MAX = Number(process.env.SHARD_MAX || 10000);
+const BATCH_LIMIT = Number(process.env.BATCH_LIMIT || 2500);
+const CONCURRENCY = Number(process.env.CONCURRENCY || 25);
 
 async function exists(filePath) {
   try {
@@ -20,6 +21,7 @@ async function fetchOfficialOgImage(officialUrl) {
   try {
     const res = await fetch(officialUrl, {
       headers: { 'User-Agent': 'EnterXeraBot/1.0' },
+      signal: AbortSignal.timeout(6000),
     });
     if (!res.ok) return null;
     const html = await res.text();
@@ -34,14 +36,18 @@ async function fetchOfficialOgImage(officialUrl) {
 }
 
 async function fetchAndSaveWebp(url, outPath, width, height) {
-  const res = await fetch(url);
-  if (!res.ok) return false;
-  const buf = Buffer.from(await res.arrayBuffer());
-  await sharp(buf)
-    .resize(width, height, { fit: 'cover', withoutEnlargement: true })
-    .webp({ quality: 82 })
-    .toFile(outPath);
-  return true;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return false;
+    const buf = Buffer.from(await res.arrayBuffer());
+    await sharp(buf)
+      .resize(width, height, { fit: 'cover', withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toFile(outPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function main() {
@@ -52,36 +58,46 @@ async function main() {
   }
   const mappings = await res.json();
 
-  let processed = 0;
-  let missingCount = 0;
-
+  const targets = [];
   for (const [exIdStr, map] of Object.entries(mappings)) {
     const exId = Number(exIdStr);
     if (exId < SHARD_MIN || exId > SHARD_MAX) continue;
+    targets.push({ exId, map });
+  }
 
-    const posterPath = path.resolve('posters', `${exId}.webp`);
-    if (await exists(posterPath)) continue;
+  console.log(`Targets in range ${SHARD_MIN}-${SHARD_MAX}: ${targets.length}`);
 
-    missingCount++;
-    if (processed >= BATCH_LIMIT || !map.official_url) continue;
+  let processed = 0;
+  async function handleItem(item) {
+    if (processed >= BATCH_LIMIT) return;
+    const posterPath = path.resolve('posters', `${item.exId}.webp`);
+    if (await exists(posterPath)) return;
+
+    if (!item.map.official_url) return;
 
     try {
-      const ogImageUrl = await fetchOfficialOgImage(map.official_url);
+      const ogImageUrl = await fetchOfficialOgImage(item.map.official_url);
       if (ogImageUrl) {
         const ok = await fetchAndSaveWebp(ogImageUrl, posterPath, 600, 900);
         if (ok) {
           processed++;
-          console.log(`Saved official poster for ex_id ${exId}`);
+          if (processed % 50 === 0) {
+            console.log(`[Media Progress] Processed ${processed} posters in range ${SHARD_MIN}-${SHARD_MAX}`);
+          }
         }
       }
-    } catch (err) {
-      console.warn(`Failed ex_id ${exId}:`, err.message);
+    } catch {
+      // Ignore network timeout
     }
   }
 
-  console.log(
-    `Shard ${SHARD_MIN}-${SHARD_MAX}: processed ${processed}, remaining missing: ${Math.max(0, missingCount - processed)}`
-  );
+  for (let i = 0; i < targets.length; i += CONCURRENCY) {
+    if (processed >= BATCH_LIMIT) break;
+    const chunk = targets.slice(i, i + CONCURRENCY);
+    await Promise.all(chunk.map(handleItem));
+  }
+
+  console.log(`Shard range ${SHARD_MIN}-${SHARD_MAX} finished. Saved: ${processed} posters.`);
 }
 
 main().catch((err) => {

@@ -1,16 +1,24 @@
-name: Sync EnterXera Media (Shard 1)
+name: Sync EnterXera Media Matrix
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  sync:
+  sync-matrix:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        range:
+          - { start: 1, end: 2500 }
+          - { start: 2501, end: 5000 }
+          - { start: 5001, end: 7500 }
+          - { start: 7501, end: 10000 }
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,7 +31,12 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run media sync
+      - name: Run High Throughput Media Sync
+        env:
+          SHARD_MIN: ${{ matrix.range.start }}
+          SHARD_MAX: ${{ matrix.range.end }}
+          BATCH_LIMIT: 2500
+          CONCURRENCY: 25
         run: npm run sync
 
       - name: Commit & Push changes
@@ -32,8 +45,9 @@ jobs:
           git config user.email "bot@enterxera.com"
           git add posters/ banners/ backdrops/ logos/ avatars/
           if git diff --staged --quiet; then
-            echo "No new media to commit."
+            echo "No changes to commit."
           else
-            git commit -m "chore(media): sync shard 1 assets"
-            git push
+            git commit -m "chore(media): bulk sync posters range ${{ matrix.range.start }}-${{ matrix.range.end }}"
+            git pull --rebase origin main
+            git push origin main
           fi
