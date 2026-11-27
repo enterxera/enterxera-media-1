@@ -1,9 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import sharp from 'sharp';
 
-const MAPPINGS_URL =
-  'https://cdn.jsdelivr.net/gh/enterxera/enterxera-db@main/data/mappings.json';
-
+const DB_BASE = 'https://cdn.jsdelivr.net/gh/enterxera/enterxera-db@main/data';
 const SHARD_MIN = 1;
 const SHARD_MAX = 10000;
 const BATCH_LIMIT = Number(process.env.BATCH_LIMIT || 50);
@@ -17,30 +16,57 @@ async function exists(filePath) {
   }
 }
 
+async function fetchAndSaveWebp(url, outPath, width, height) {
+  const res = await fetch(url);
+  if (!res.ok) return false;
+  const buf = Buffer.from(await res.arrayBuffer());
+  await sharp(buf)
+    .resize(width, height, { fit: 'cover', withoutEnlargement: true })
+    .webp({ quality: 82 })
+    .toFile(outPath);
+  return true;
+}
+
 async function main() {
-  console.log(`Fetching mappings from ${MAPPINGS_URL}...`);
-  const res = await fetch(MAPPINGS_URL);
+  console.log(`Fetching mappings from ${DB_BASE}/mappings.json...`);
+  const res = await fetch(`${DB_BASE}/mappings.json`);
   if (!res.ok) {
     throw new Error(`Failed to fetch mappings: ${res.status} ${res.statusText}`);
   }
   const mappings = await res.json();
 
+  let processed = 0;
   let missingCount = 0;
+
   for (const [exIdStr] of Object.entries(mappings)) {
     const exId = Number(exIdStr);
     if (exId < SHARD_MIN || exId > SHARD_MAX) continue;
 
     const posterPath = path.resolve('posters', `${exId}.webp`);
-    if (!(await exists(posterPath))) {
-      missingCount++;
-      if (missingCount <= BATCH_LIMIT) {
-        // Placeholder: hook primary/official source fetcher here
+    if (await exists(posterPath)) continue;
+
+    missingCount++;
+    if (processed >= BATCH_LIMIT) continue;
+
+    try {
+      const detailRes = await fetch(`${DB_BASE}/anime/${exId}.json`);
+      if (!detailRes.ok) continue;
+      const detail = await detailRes.json();
+
+      if (detail.ann_picture) {
+        const ok = await fetchAndSaveWebp(detail.ann_picture, posterPath, 600, 900);
+        if (ok) {
+          processed++;
+          console.log(`Saved poster for ex_id ${exId}`);
+        }
       }
+    } catch (err) {
+      console.warn(`Failed ex_id ${exId}:`, err.message);
     }
   }
 
   console.log(
-    `Shard ${SHARD_MIN}-${SHARD_MAX}: ${missingCount} entries missing posters (batch limit: ${BATCH_LIMIT}).`
+    `Shard ${SHARD_MIN}-${SHARD_MAX}: processed ${processed}, remaining missing: ${Math.max(0, missingCount - processed)}`
   );
 }
 

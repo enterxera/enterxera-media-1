@@ -6,5 +6,8 @@
   "description": "Sharded static media CDN (ex_id 1 - 10,000) for EnterXera",
   "scripts": {
     "sync": "node scripts/sync-media.mjs"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
   }
 }
