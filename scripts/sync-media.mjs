@@ -5,7 +5,7 @@ import sharp from 'sharp';
 const DB_BASE = 'https://cdn.jsdelivr.net/gh/enterxera/enterxera-db@main/data';
 const SHARD_MIN = 1;
 const SHARD_MAX = 10000;
-const BATCH_LIMIT = Number(process.env.BATCH_LIMIT || 50);
+const BATCH_LIMIT = Number(process.env.BATCH_LIMIT || 500);
 
 async function exists(filePath) {
   try {
