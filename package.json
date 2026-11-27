@@ -1,0 +1,10 @@
+{
+  "name": "enterxera-media-1",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Sharded static media CDN (ex_id 1 - 10,000) for EnterXera",
+  "scripts": {
+    "sync": "node scripts/sync-media.mjs"
+  }
+}
